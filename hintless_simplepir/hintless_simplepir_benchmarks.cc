@@ -30,6 +30,7 @@
 
 ABSL_FLAG(int, num_rows, 1024, "Number of rows");
 ABSL_FLAG(int, num_cols, 1024, "Number of cols");
+ABSL_FLAG(int, db_record_bit_size, 8, "Record Size in bits");
 
 namespace hintless_pir {
 namespace hintless_simplepir {
@@ -61,9 +62,17 @@ const Parameters kParameters{
 void BM_HintlessPirRlwe64(benchmark::State& state) {
   int64_t num_rows = absl::GetFlag(FLAGS_num_rows);
   int64_t num_cols = absl::GetFlag(FLAGS_num_cols);
+  int64_t db_record_bit_size = absl::GetFlag(FLAGS_db_record_bit_size);
+
+  std::cout << "db_size_mb: " << num_rows * num_cols * db_record_bit_size / (8 * 1024 * 1024) << std::endl;
+
+  // std::cout << "num_rows: " << num_rows << std::endl;
+  // std::cout << "num_cols: " << num_cols << std::endl;
+
   Parameters params = kParameters;
   params.db_rows = num_rows;
   params.db_cols = num_cols;
+  params.db_record_bit_size = db_record_bit_size;
 
   // Create server and fill in random database records.
   auto server = Server::CreateWithRandomDatabaseRecords(params).value();
