@@ -59,12 +59,39 @@ const Parameters kParameters{
     .prng_type = rlwe::PRNG_TYPE_HKDF,
 };
 
+void BM_HintlessPirPreprocess(benchmark::State& state) {
+  int64_t num_rows = absl::GetFlag(FLAGS_num_rows);
+  int64_t num_cols = absl::GetFlag(FLAGS_num_cols);
+  int64_t db_record_bit_size = absl::GetFlag(FLAGS_db_record_bit_size);
+
+  // std::cout << "db_size_mb: " << num_rows * num_cols * db_record_bit_size / (8 * 1024 * 1024) << std::endl;
+
+  // std::cout << "num_rows: " << num_rows << std::endl;
+  // std::cout << "num_cols: " << num_cols << std::endl;
+
+  Parameters params = kParameters;
+  params.db_rows = num_rows;
+  params.db_cols = num_cols;
+  params.db_record_bit_size = db_record_bit_size;
+
+  // Create server and fill in random database records.
+  auto server = Server::CreateWithRandomDatabaseRecords(params).value();
+  const Database* database = server->GetDatabase();
+  ASSERT_EQ(database->NumRecords(), num_rows * num_cols);
+
+  // Preprocess the server and get public parameters.
+  for (auto _ : state) {
+    server->Preprocess();
+  }
+
+}
+
 void BM_HintlessPirRlwe64(benchmark::State& state) {
   int64_t num_rows = absl::GetFlag(FLAGS_num_rows);
   int64_t num_cols = absl::GetFlag(FLAGS_num_cols);
   int64_t db_record_bit_size = absl::GetFlag(FLAGS_db_record_bit_size);
 
-  std::cout << "db_size_mb: " << num_rows * num_cols * db_record_bit_size / (8 * 1024 * 1024) << std::endl;
+  // std::cout << "db_size_mb: " << num_rows * num_cols * db_record_bit_size / (8 * 1024 * 1024) << std::endl;
 
   // std::cout << "num_rows: " << num_rows << std::endl;
   // std::cout << "num_cols: " << num_cols << std::endl;
@@ -98,6 +125,8 @@ void BM_HintlessPirRlwe64(benchmark::State& state) {
   std::string expected = database->Record(1).value();
   ASSERT_EQ(record, expected);
 }
+
+BENCHMARK(BM_HintlessPirPreprocess);
 BENCHMARK(BM_HintlessPirRlwe64);
 
 }  // namespace
@@ -116,6 +145,12 @@ int main(int argc, char* argv[]) {
   FLAGS_benchmark_filter = "";
   benchmark::Initialize(&argc, argv);
   absl::ParseCommandLine(argc, argv);
+  int64_t num_rows = absl::GetFlag(FLAGS_num_rows);
+  int64_t num_cols = absl::GetFlag(FLAGS_num_cols);
+  int64_t db_record_bit_size = absl::GetFlag(FLAGS_db_record_bit_size);
+
+  std::cout << "db_size_mb: " << num_rows * num_cols * db_record_bit_size / (8 * 1024 * 1024) << std::endl;
+
   if (!FLAGS_benchmark_filter.empty()) {
     benchmark::RunSpecifiedBenchmarks();
   }
