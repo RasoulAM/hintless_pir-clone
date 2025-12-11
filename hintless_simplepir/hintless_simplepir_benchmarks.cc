@@ -65,6 +65,13 @@ void BM_HintlessPirRlwe64(benchmark::State& state) {
   params.db_rows = num_rows;
   params.db_cols = num_cols;
 
+  std::cout << "num_rows: " << num_rows
+            << ", num_cols: " << num_cols << std::endl;
+
+  std::cout << "Database Size: "
+            << (num_rows * num_cols * params.db_record_bit_size) / (8 * 1024 * 1024)
+            << " MB" << std::endl;
+
   // Create server and fill in random database records.
   auto server = Server::CreateWithRandomDatabaseRecords(params).value();
   const Database* database = server->GetDatabase();
