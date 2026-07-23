@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <cstdint>
+#include <cmath>
 #include <memory>
 #include <string>
 
@@ -107,6 +108,20 @@ void BM_HintlessPirRlwe64(benchmark::State& state) {
   std::cout << "Database Size: "
             << (num_rows * num_cols * params.db_record_bit_size) / (8 * 1024 * 1024)
             << " MB" << std::endl;
+
+  // Server Long term Storage calculation
+  int64_t n = 1LL << params.linpir_params.log_n;
+  int64_t N = params.lwe_secret_dim;
+  double ks_bits = 0;
+  for (size_t i = 0; i < params.linpir_params.qs.size(); ++i) {
+    int64_t q_bits = std::ceil(std::log2(params.linpir_params.qs[i]));
+    int64_t ell = std::ceil(static_cast<double>(q_bits) / params.linpir_params.gadget_log_bs[i]);
+    ks_bits += n * N * (ell + 1) * q_bits;
+  }
+  double hint_matrix_bits = static_cast<double>(params.db_rows) * N * params.lwe_modulus_bit_size;
+  double server_storage_bytes = (ks_bits + hint_matrix_bits) / 8.0;
+
+  std::cout << "Calculated Server Long term Storage (B): " << server_storage_bytes << std::endl;
 
   // Create server and fill in random database records.
   auto server = Server::CreateWithRandomDatabaseRecords(params).value();
