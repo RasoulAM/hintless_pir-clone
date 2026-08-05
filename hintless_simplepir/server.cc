@@ -188,11 +188,13 @@ void Server::DumpStateToDisk() {
     size_t num_hints = database_->Hints().size();
     out.write(reinterpret_cast<const char*>(&num_hints), sizeof(num_hints));
     for (const auto& hint : database_->Hints()) {
-        rows = hint.rows();
-        cols = hint.cols();
+        rows = hint.size();
+        cols = hint.empty() ? 0 : hint[0].size();
         out.write(reinterpret_cast<const char*>(&rows), sizeof(rows));
         out.write(reinterpret_cast<const char*>(&cols), sizeof(cols));
-        out.write(reinterpret_cast<const char*>(hint.data()), rows * cols * sizeof(lwe::Integer));
+        for (const auto& row : hint) {
+            out.write(reinterpret_cast<const char*>(row.data()), cols * sizeof(lwe::Integer));
+        }
     }
     
     // 3. Write linpir_databases_
@@ -218,7 +220,7 @@ void Server::DumpStateToDisk() {
                     for (const auto& vec : coeffs) {
                         size_t vec_size = vec.size();
                         out.write(reinterpret_cast<const char*>(&vec_size), sizeof(vec_size));
-                        out.write(reinterpret_cast<const char*>(vec.data()), vec_size * sizeof(typename RnsPolynomial::ModularInt));
+                        out.write(reinterpret_cast<const char*>(vec.data()), vec_size * sizeof(typename rlwe::RnsPolynomial<RlweInteger>::ModularInt));
                     }
                 }
             }
@@ -234,7 +236,7 @@ void Server::DumpStateToDisk() {
                 for (const auto& vec : coeffs) {
                     size_t vec_size = vec.size();
                     out.write(reinterpret_cast<const char*>(&vec_size), sizeof(vec_size));
-                    out.write(reinterpret_cast<const char*>(vec.data()), vec_size * sizeof(typename RnsPolynomial::ModularInt));
+                    out.write(reinterpret_cast<const char*>(vec.data()), vec_size * sizeof(typename rlwe::RnsPolynomial<RlweInteger>::ModularInt));
                 }
             }
         }
@@ -274,12 +276,15 @@ void Server::LoadStateFromDisk() {
     // 2. Read database_->hints_
     size_t num_hints;
     std::memcpy(&num_hints, ptr, sizeof(num_hints)); ptr += sizeof(num_hints);
-    std::vector<lwe::Matrix> hints(num_hints);
+    std::vector<Database::LweMatrix> hints(num_hints);
     for (size_t i = 0; i < num_hints; ++i) {
         std::memcpy(&rows, ptr, sizeof(rows)); ptr += sizeof(rows);
         std::memcpy(&cols, ptr, sizeof(cols)); ptr += sizeof(cols);
-        hints[i].resize(rows, cols);
-        std::memcpy(hints[i].data(), ptr, rows * cols * sizeof(lwe::Integer)); ptr += rows * cols * sizeof(lwe::Integer);
+        hints[i].resize(rows);
+        for (size_t r = 0; r < rows; ++r) {
+            hints[i][r].resize(cols);
+            std::memcpy(hints[i][r].data(), ptr, cols * sizeof(lwe::Integer)); ptr += cols * sizeof(lwe::Integer);
+        }
     }
     database_->SetHints(std::move(hints));
     
@@ -298,7 +303,7 @@ void Server::LoadStateFromDisk() {
             // Diagonals
             size_t num_blocks;
             std::memcpy(&num_blocks, ptr, sizeof(num_blocks)); ptr += sizeof(num_blocks);
-            std::vector<std::vector<RnsPolynomial>> diagonals(num_blocks);
+            std::vector<std::vector<rlwe::RnsPolynomial<RlweInteger>>> diagonals(num_blocks);
             for (size_t b = 0; b < num_blocks; ++b) {
                 size_t num_polys;
                 std::memcpy(&num_polys, ptr, sizeof(num_polys)); ptr += sizeof(num_polys);
@@ -306,14 +311,14 @@ void Server::LoadStateFromDisk() {
                 for (size_t p = 0; p < num_polys; ++p) {
                     size_t num_coeffs_vecs;
                     std::memcpy(&num_coeffs_vecs, ptr, sizeof(num_coeffs_vecs)); ptr += sizeof(num_coeffs_vecs);
-                    std::vector<std::vector<typename RnsPolynomial::ModularInt>> coeffs(num_coeffs_vecs);
+                    std::vector<std::vector<typename rlwe::RnsPolynomial<RlweInteger>::ModularInt>> coeffs(num_coeffs_vecs);
                     for (size_t v = 0; v < num_coeffs_vecs; ++v) {
                         size_t vec_size;
                         std::memcpy(&vec_size, ptr, sizeof(vec_size)); ptr += sizeof(vec_size);
                         coeffs[v].resize(vec_size);
-                        std::memcpy(coeffs[v].data(), ptr, vec_size * sizeof(typename RnsPolynomial::ModularInt)); ptr += vec_size * sizeof(typename RnsPolynomial::ModularInt);
+                        std::memcpy(coeffs[v].data(), ptr, vec_size * sizeof(typename rlwe::RnsPolynomial<RlweInteger>::ModularInt)); ptr += vec_size * sizeof(typename rlwe::RnsPolynomial<RlweInteger>::ModularInt);
                     }
-                    diagonals[b].push_back(RnsPolynomial::Create(std::move(coeffs), true).value());
+                    diagonals[b].push_back(rlwe::RnsPolynomial<RlweInteger>::Create(std::move(coeffs), true).value());
                 }
             }
             db_empty->SetDiagonals(std::move(diagonals));
@@ -321,19 +326,19 @@ void Server::LoadStateFromDisk() {
             // Pad Inner Products
             size_t num_pads;
             std::memcpy(&num_pads, ptr, sizeof(num_pads)); ptr += sizeof(num_pads);
-            std::vector<RnsPolynomial> pads;
+            std::vector<rlwe::RnsPolynomial<RlweInteger>> pads;
             pads.reserve(num_pads);
             for (size_t p = 0; p < num_pads; ++p) {
                 size_t num_coeffs_vecs;
                 std::memcpy(&num_coeffs_vecs, ptr, sizeof(num_coeffs_vecs)); ptr += sizeof(num_coeffs_vecs);
-                std::vector<std::vector<typename RnsPolynomial::ModularInt>> coeffs(num_coeffs_vecs);
+                std::vector<std::vector<typename rlwe::RnsPolynomial<RlweInteger>::ModularInt>> coeffs(num_coeffs_vecs);
                 for (size_t v = 0; v < num_coeffs_vecs; ++v) {
                     size_t vec_size;
                     std::memcpy(&vec_size, ptr, sizeof(vec_size)); ptr += sizeof(vec_size);
                     coeffs[v].resize(vec_size);
-                    std::memcpy(coeffs[v].data(), ptr, vec_size * sizeof(typename RnsPolynomial::ModularInt)); ptr += vec_size * sizeof(typename RnsPolynomial::ModularInt);
+                    std::memcpy(coeffs[v].data(), ptr, vec_size * sizeof(typename rlwe::RnsPolynomial<RlweInteger>::ModularInt)); ptr += vec_size * sizeof(typename rlwe::RnsPolynomial<RlweInteger>::ModularInt);
                 }
-                pads.push_back(RnsPolynomial::Create(std::move(coeffs), true).value());
+                pads.push_back(rlwe::RnsPolynomial<RlweInteger>::Create(std::move(coeffs), true).value());
             }
             db_empty->SetPadInnerProducts(std::move(pads));
             
