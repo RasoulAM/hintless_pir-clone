@@ -20,6 +20,14 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <chrono>
+#include <fstream>
+#include <cstring>
+#include <iostream>
+
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -76,6 +84,9 @@ class Server {
         database_(std::move(database)),
         rlwe_contexts_(std::move(rlwe_contexts)) {}
 
+
+  void DumpStateToDisk();
+  void LoadStateFromDisk();
   // Refreshes the server's public parameters.
   // This is part of the preprocess steps.
   absl::Status GeneratePublicParams();

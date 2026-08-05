@@ -121,7 +121,7 @@ void BM_HintlessPirRlwe64(benchmark::State& state) {
   double hint_matrix_bits = static_cast<double>(params.db_rows) * N * params.lwe_modulus_bit_size;
   double server_storage_bytes = (ks_bits + hint_matrix_bits) / 8.0;
 
-  std::cout << "Calculated Server Long term Storage (B): " << server_storage_bytes << std::endl;
+  std::cout << "Server Preprocsesed Size Ideal (B): " << server_storage_bytes << std::endl;
 
   // Create server and fill in random database records.
   auto server = Server::CreateWithRandomDatabaseRecords(params).value();

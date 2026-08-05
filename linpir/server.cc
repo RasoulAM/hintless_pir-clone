@@ -171,7 +171,9 @@ absl::Status Server<RlweInteger>::Preprocess() {
 
   // Preprocess the databases using the "a" part of Enc(s << i).
   for (auto const& database : databases_) {
-    RLWE_RETURN_IF_ERROR(database->Preprocess(ct_pads_));
+    if (!database->IsPreprocessed()) {
+      RLWE_RETURN_IF_ERROR(database->Preprocess(ct_pads_));
+    }
   }
   return absl::OkStatus();
 }

@@ -68,8 +68,23 @@ class Database {
 
   // Accessors
   int NumBlocks() const { return diagonals_.size(); }
-  int NumDiagonalsPerBlock() const { return diagonals_[0].size(); }
+  int NumDiagonalsPerBlock() const { return diagonals_.empty() ? 0 : diagonals_[0].size(); }
   bool IsPreprocessed() const { return !pad_inner_products_.empty(); }
+
+  const std::vector<std::vector<RnsPolynomial>>& Diagonals() const { return diagonals_; }
+  const std::vector<RnsPolynomial>& PadInnerProducts() const { return pad_inner_products_; }
+
+  static absl::StatusOr<std::unique_ptr<Database>> CreateEmpty(const RnsContext* rns_context) {
+    if (rns_context == nullptr) {
+      return absl::InvalidArgumentError("`rns_context` must not be null.");
+    }
+    std::vector<const PrimeModulus*> moduli = rns_context->MainPrimeModuli();
+    auto encoder = Encoder::Create(rns_context).value();
+    return std::unique_ptr<Database>(new Database(rns_context, std::move(moduli), std::move(encoder), {}));
+  }
+
+  void SetDiagonals(std::vector<std::vector<RnsPolynomial>> diagonals) { diagonals_ = std::move(diagonals); }
+  void SetPadInnerProducts(std::vector<RnsPolynomial> pad_inner_products) { pad_inner_products_ = std::move(pad_inner_products); }
 
  private:
   explicit Database(const RnsContext* rns_context,

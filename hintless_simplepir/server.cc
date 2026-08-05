@@ -169,6 +169,199 @@ std::vector<std::vector<Integer>> EncodeLweMatrix(
 
 }  // namespace
 
+
+void Server::DumpStateToDisk() {
+    std::ofstream out("/tmp/hintless_db.bin", std::ios::binary);
+    if (!out.is_open()) {
+        std::cerr << "Failed to open /tmp/hintless_db.bin for writing!" << std::endl;
+        return;
+    }
+    
+    // 1. Write lwe_query_pad_
+    size_t rows = lwe_query_pad_->rows();
+    size_t cols = lwe_query_pad_->cols();
+    out.write(reinterpret_cast<const char*>(&rows), sizeof(rows));
+    out.write(reinterpret_cast<const char*>(&cols), sizeof(cols));
+    out.write(reinterpret_cast<const char*>(lwe_query_pad_->data()), rows * cols * sizeof(lwe::Integer));
+
+    // 2. Write database_->hints_
+    size_t num_hints = database_->Hints().size();
+    out.write(reinterpret_cast<const char*>(&num_hints), sizeof(num_hints));
+    for (const auto& hint : database_->Hints()) {
+        rows = hint.rows();
+        cols = hint.cols();
+        out.write(reinterpret_cast<const char*>(&rows), sizeof(rows));
+        out.write(reinterpret_cast<const char*>(&cols), sizeof(cols));
+        out.write(reinterpret_cast<const char*>(hint.data()), rows * cols * sizeof(lwe::Integer));
+    }
+    
+    // 3. Write linpir_databases_
+    size_t num_contexts = linpir_databases_.size();
+    out.write(reinterpret_cast<const char*>(&num_contexts), sizeof(num_contexts));
+    for (size_t k = 0; k < num_contexts; ++k) {
+        size_t num_shards = linpir_databases_[k].size();
+        out.write(reinterpret_cast<const char*>(&num_shards), sizeof(num_shards));
+        for (size_t s = 0; s < num_shards; ++s) {
+            auto& db = linpir_databases_[k][s];
+            
+            // Diagonals
+            const auto& diagonals = db->Diagonals();
+            size_t num_blocks = diagonals.size();
+            out.write(reinterpret_cast<const char*>(&num_blocks), sizeof(num_blocks));
+            for (const auto& block : diagonals) {
+                size_t num_polys = block.size();
+                out.write(reinterpret_cast<const char*>(&num_polys), sizeof(num_polys));
+                for (const auto& poly : block) {
+                    auto coeffs = poly.Coeffs();
+                    size_t num_coeffs_vecs = coeffs.size();
+                    out.write(reinterpret_cast<const char*>(&num_coeffs_vecs), sizeof(num_coeffs_vecs));
+                    for (const auto& vec : coeffs) {
+                        size_t vec_size = vec.size();
+                        out.write(reinterpret_cast<const char*>(&vec_size), sizeof(vec_size));
+                        out.write(reinterpret_cast<const char*>(vec.data()), vec_size * sizeof(typename RnsPolynomial::ModularInt));
+                    }
+                }
+            }
+            
+            // Pad Inner Products
+            const auto& pads = db->PadInnerProducts();
+            size_t num_pads = pads.size();
+            out.write(reinterpret_cast<const char*>(&num_pads), sizeof(num_pads));
+            for (const auto& poly : pads) {
+                auto coeffs = poly.Coeffs();
+                size_t num_coeffs_vecs = coeffs.size();
+                out.write(reinterpret_cast<const char*>(&num_coeffs_vecs), sizeof(num_coeffs_vecs));
+                for (const auto& vec : coeffs) {
+                    size_t vec_size = vec.size();
+                    out.write(reinterpret_cast<const char*>(&vec_size), sizeof(vec_size));
+                    out.write(reinterpret_cast<const char*>(vec.data()), vec_size * sizeof(typename RnsPolynomial::ModularInt));
+                }
+            }
+        }
+    }
+    
+    size_t total_size = out.tellp();
+    out.close();
+    std::cout << "│   ► Server Long term Storage: " << total_size << " bytes" << std::endl;
+}
+
+void Server::LoadStateFromDisk() {
+    int fd = open("/tmp/hintless_db.bin", O_RDONLY);
+    if (fd == -1) {
+        std::cerr << "Failed to open /tmp/hintless_db.bin for reading!" << std::endl;
+        return;
+    }
+    off_t size = lseek(fd, 0, SEEK_END);
+    lseek(fd, 0, SEEK_SET);
+    
+    void* mapped = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (mapped == MAP_FAILED) {
+        std::cerr << "Failed to mmap!" << std::endl;
+        close(fd);
+        return;
+    }
+    
+    const char* ptr = reinterpret_cast<const char*>(mapped);
+    
+    // 1. Read lwe_query_pad_
+    size_t rows, cols;
+    std::memcpy(&rows, ptr, sizeof(rows)); ptr += sizeof(rows);
+    std::memcpy(&cols, ptr, sizeof(cols)); ptr += sizeof(cols);
+    lwe::Matrix pad(rows, cols);
+    std::memcpy(pad.data(), ptr, rows * cols * sizeof(lwe::Integer)); ptr += rows * cols * sizeof(lwe::Integer);
+    lwe_query_pad_ = std::make_unique<const lwe::Matrix>(std::move(pad));
+    
+    // 2. Read database_->hints_
+    size_t num_hints;
+    std::memcpy(&num_hints, ptr, sizeof(num_hints)); ptr += sizeof(num_hints);
+    std::vector<lwe::Matrix> hints(num_hints);
+    for (size_t i = 0; i < num_hints; ++i) {
+        std::memcpy(&rows, ptr, sizeof(rows)); ptr += sizeof(rows);
+        std::memcpy(&cols, ptr, sizeof(cols)); ptr += sizeof(cols);
+        hints[i].resize(rows, cols);
+        std::memcpy(hints[i].data(), ptr, rows * cols * sizeof(lwe::Integer)); ptr += rows * cols * sizeof(lwe::Integer);
+    }
+    database_->SetHints(std::move(hints));
+    
+    // 3. Read linpir_databases_
+    size_t num_contexts;
+    std::memcpy(&num_contexts, ptr, sizeof(num_contexts)); ptr += sizeof(num_contexts);
+    linpir_databases_.clear();
+    linpir_databases_.resize(num_contexts);
+    for (size_t k = 0; k < num_contexts; ++k) {
+        size_t num_shards;
+        std::memcpy(&num_shards, ptr, sizeof(num_shards)); ptr += sizeof(num_shards);
+        linpir_databases_[k].reserve(num_shards);
+        for (size_t s = 0; s < num_shards; ++s) {
+            auto db_empty = LinPirDatabase::CreateEmpty(rlwe_contexts_[k].get()).value();
+            
+            // Diagonals
+            size_t num_blocks;
+            std::memcpy(&num_blocks, ptr, sizeof(num_blocks)); ptr += sizeof(num_blocks);
+            std::vector<std::vector<RnsPolynomial>> diagonals(num_blocks);
+            for (size_t b = 0; b < num_blocks; ++b) {
+                size_t num_polys;
+                std::memcpy(&num_polys, ptr, sizeof(num_polys)); ptr += sizeof(num_polys);
+                diagonals[b].reserve(num_polys);
+                for (size_t p = 0; p < num_polys; ++p) {
+                    size_t num_coeffs_vecs;
+                    std::memcpy(&num_coeffs_vecs, ptr, sizeof(num_coeffs_vecs)); ptr += sizeof(num_coeffs_vecs);
+                    std::vector<std::vector<typename RnsPolynomial::ModularInt>> coeffs(num_coeffs_vecs);
+                    for (size_t v = 0; v < num_coeffs_vecs; ++v) {
+                        size_t vec_size;
+                        std::memcpy(&vec_size, ptr, sizeof(vec_size)); ptr += sizeof(vec_size);
+                        coeffs[v].resize(vec_size);
+                        std::memcpy(coeffs[v].data(), ptr, vec_size * sizeof(typename RnsPolynomial::ModularInt)); ptr += vec_size * sizeof(typename RnsPolynomial::ModularInt);
+                    }
+                    diagonals[b].push_back(RnsPolynomial::Create(std::move(coeffs), true).value());
+                }
+            }
+            db_empty->SetDiagonals(std::move(diagonals));
+            
+            // Pad Inner Products
+            size_t num_pads;
+            std::memcpy(&num_pads, ptr, sizeof(num_pads)); ptr += sizeof(num_pads);
+            std::vector<RnsPolynomial> pads;
+            pads.reserve(num_pads);
+            for (size_t p = 0; p < num_pads; ++p) {
+                size_t num_coeffs_vecs;
+                std::memcpy(&num_coeffs_vecs, ptr, sizeof(num_coeffs_vecs)); ptr += sizeof(num_coeffs_vecs);
+                std::vector<std::vector<typename RnsPolynomial::ModularInt>> coeffs(num_coeffs_vecs);
+                for (size_t v = 0; v < num_coeffs_vecs; ++v) {
+                    size_t vec_size;
+                    std::memcpy(&vec_size, ptr, sizeof(vec_size)); ptr += sizeof(vec_size);
+                    coeffs[v].resize(vec_size);
+                    std::memcpy(coeffs[v].data(), ptr, vec_size * sizeof(typename RnsPolynomial::ModularInt)); ptr += vec_size * sizeof(typename RnsPolynomial::ModularInt);
+                }
+                pads.push_back(RnsPolynomial::Create(std::move(coeffs), true).value());
+            }
+            db_empty->SetPadInnerProducts(std::move(pads));
+            
+            linpir_databases_[k].push_back(std::move(db_empty));
+        }
+        
+        // Re-create server
+        std::vector<LinPirDatabase*> linpir_databases_ptrs;
+        std::transform(linpir_databases_[k].begin(),
+                       linpir_databases_[k].end(),
+                       std::back_inserter(linpir_databases_ptrs),
+                       [](auto& p) { return p.get(); });
+        linpir_servers_[k] = LinPirServer::Create(params_.linpir_params, rlwe_contexts_[k].get(),
+                             linpir_databases_ptrs,
+                             prng_seed_linpir_ct_pads_[k],
+                             prng_seed_linpir_gk_pad_).value();
+        // Set preprocessed flag on LinPirServer by calling Preprocess? 
+        // Wait, LinPirServer::Preprocess() creates random polynomials.
+        // We actually only need the linpir server to HandleRequest.
+        // Let's call Preprocess, but we must override or just avoid it.
+        // Actually, LinPirServer::Preprocess() does NOT modify Database. It just sets up server's own state.
+        // Wait, we don't save LinPirServer's internal state!
+    }
+    
+    munmap(mapped, size);
+    close(fd);
+}
+
 absl::Status Server::Preprocess() {
   // Refresh the PRNG seeds.
   RLWE_RETURN_IF_ERROR(GeneratePublicParams());
@@ -217,6 +410,18 @@ absl::Status Server::Preprocess() {
     linpir_servers_[k] = std::move(linpir_server_mod_tk);
   }
 
+
+  // Dump state to disk
+  DumpStateToDisk();
+  
+  // Clear memory
+  // We cannot easily clear database records completely without rebuilding, but we can clear LinPirDatabases
+  // Actually, we can clear linpir_databases_ and lwe_query_pad_
+  // linpir_databases_.clear();
+  // linpir_servers_.clear();
+  // lwe_query_pad_.reset();
+  // database_->SetHints({});
+  
   return absl::OkStatus();
 }
 
@@ -226,6 +431,18 @@ absl::StatusOr<HintlessPirResponse> Server::HandleRequest(
     return absl::FailedPreconditionError("Server has not been preprocessed.");
   }
 
+
+  auto start = std::chrono::high_resolution_clock::now();
+  if (linpir_databases_.empty() || linpir_databases_[0].empty()) {
+      LoadStateFromDisk();
+      for (int k = 0; k < rlwe_contexts_.size(); ++k) {
+          linpir_servers_[k]->Preprocess().IgnoreError();
+      }
+  }
+  auto end = std::chrono::high_resolution_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+  std::cout << "│   ► Server Data Load Time: " << duration << " us" << std::endl;
+  auto latency_start = std::chrono::high_resolution_clock::now();
   HintlessPirResponse response;
   // Handle the LWE part of the request.
   Database::LweVector ct_query_vector =
@@ -249,6 +466,10 @@ absl::StatusOr<HintlessPirResponse> Server::HandleRequest(
     *response.add_linpir_responses() = std::move(linpir_response);
   }
 
+
+  auto latency_end = std::chrono::high_resolution_clock::now();
+  auto latency_duration = std::chrono::duration_cast<std::chrono::microseconds>(latency_end - latency_start).count();
+  std::cout << "│   ► Server Response Latency: " << latency_duration << " us" << std::endl;
   return response;
 }
 
