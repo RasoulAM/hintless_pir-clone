@@ -315,7 +315,7 @@ void Server::LoadStateFromDisk() {
                     for (size_t v = 0; v < num_coeffs_vecs; ++v) {
                         size_t vec_size;
                         std::memcpy(&vec_size, ptr, sizeof(vec_size)); ptr += sizeof(vec_size);
-                        auto dummy = RlweModularInt::ImportZero(rlwe_contexts_[k]->MainPrimeModuli()[v]); coeffs[v].resize(vec_size, dummy);
+                        auto dummy = RlweModularInt::ImportZero(rlwe_contexts_[k]->MainPrimeModuli()[v]->ModParams()); coeffs[v].resize(vec_size, dummy);
                         std::memcpy(coeffs[v].data(), ptr, vec_size * sizeof(RlweModularInt)); ptr += vec_size * sizeof(RlweModularInt);
                     }
                     diagonals[b].push_back(rlwe::RnsPolynomial<RlweModularInt>::Create(std::move(coeffs), true).value());
@@ -335,7 +335,7 @@ void Server::LoadStateFromDisk() {
                 for (size_t v = 0; v < num_coeffs_vecs; ++v) {
                     size_t vec_size;
                     std::memcpy(&vec_size, ptr, sizeof(vec_size)); ptr += sizeof(vec_size);
-                    auto dummy = RlweModularInt::ImportZero(rlwe_contexts_[k]->MainPrimeModuli()[v]); coeffs[v].resize(vec_size, dummy);
+                    auto dummy = RlweModularInt::ImportZero(rlwe_contexts_[k]->MainPrimeModuli()[v]->ModParams()); coeffs[v].resize(vec_size, dummy);
                     std::memcpy(coeffs[v].data(), ptr, vec_size * sizeof(RlweModularInt)); ptr += vec_size * sizeof(RlweModularInt);
                 }
                 pads.push_back(rlwe::RnsPolynomial<RlweModularInt>::Create(std::move(coeffs), true).value());
