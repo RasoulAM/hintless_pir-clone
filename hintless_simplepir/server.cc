@@ -244,7 +244,7 @@ void Server::DumpStateToDisk() {
     
     size_t total_size = out.tellp();
     out.close();
-    std::cout << "│   ► Server Long term Storage: " << total_size << " bytes" << std::endl;
+    std::cout << "Server Long term Storage: " << total_size << " bytes" << std::endl;
 }
 
 void Server::LoadStateFromDisk() {
@@ -445,11 +445,6 @@ absl::StatusOr<HintlessPirResponse> Server::HandleRequest(
   if (!IsPreprocessed()) {
     return absl::FailedPreconditionError("Server has not been preprocessed.");
   }
-
-  auto end = std::chrono::high_resolution_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-  std::cout << "│   ► Server Data Load Time: " << duration << " us" << std::endl;
-  auto latency_start = std::chrono::high_resolution_clock::now();
   HintlessPirResponse response;
   // Handle the LWE part of the request.
   Database::LweVector ct_query_vector =
@@ -475,8 +470,8 @@ absl::StatusOr<HintlessPirResponse> Server::HandleRequest(
 
 
   auto latency_end = std::chrono::high_resolution_clock::now();
-  auto latency_duration = std::chrono::duration_cast<std::chrono::microseconds>(latency_end - latency_start).count();
-  std::cout << "│   ► Server Response Latency: " << latency_duration << " us" << std::endl;
+  auto latency_duration = std::chrono::duration_cast<std::chrono::microseconds>(latency_end - start).count();
+  std::cout << "Server Response Latency: " << latency_duration << " us" << std::endl;
   return response;
 }
 
