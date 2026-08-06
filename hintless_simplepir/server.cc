@@ -293,6 +293,8 @@ void Server::LoadStateFromDisk() {
     std::memcpy(&num_contexts, ptr, sizeof(num_contexts)); ptr += sizeof(num_contexts);
     linpir_databases_.clear();
     linpir_databases_.resize(num_contexts);
+    linpir_servers_.clear();
+    linpir_servers_.resize(num_contexts);
     for (size_t k = 0; k < num_contexts; ++k) {
         size_t num_shards;
         std::memcpy(&num_shards, ptr, sizeof(num_shards)); ptr += sizeof(num_shards);
