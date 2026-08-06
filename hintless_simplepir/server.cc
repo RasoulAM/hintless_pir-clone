@@ -416,16 +416,16 @@ absl::Status Server::Preprocess() {
   }
 
 
-  // Dump state to disk
-  DumpStateToDisk();
+  // Dump state to disk if requested
+  if (params_.write_to_disk) {
+    DumpStateToDisk();
   
-  // Clear memory
-  // We cannot easily clear database records completely without rebuilding, but we can clear LinPirDatabases
-  // Actually, we can clear linpir_databases_ and lwe_query_pad_
-  // linpir_databases_.clear();
-  // linpir_servers_.clear();
-  // lwe_query_pad_.reset();
-  // database_->SetHints({});
+    // Clear memory to force loading from disk on HandleRequest
+    linpir_databases_.clear();
+    linpir_servers_.clear();
+    lwe_query_pad_.reset();
+    database_->SetHints({});
+  }
   
   return absl::OkStatus();
 }
@@ -438,7 +438,7 @@ absl::StatusOr<HintlessPirResponse> Server::HandleRequest(
 
 
   auto start = std::chrono::high_resolution_clock::now();
-  if (linpir_databases_.empty() || linpir_databases_[0].empty()) {
+  if (params_.write_to_disk && (linpir_databases_.empty() || linpir_databases_[0].empty())) {
       LoadStateFromDisk();
       for (int k = 0; k < rlwe_contexts_.size(); ++k) {
           linpir_servers_[k]->Preprocess().IgnoreError();

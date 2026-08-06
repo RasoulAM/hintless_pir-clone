@@ -42,6 +42,8 @@ struct Parameters {
   linpir::RlweParameters<RlweInteger> linpir_params;
 
   rlwe::PrngType prng_type;
+  
+  bool write_to_disk;
 };
 
 }  // namespace hintless_simplepir
