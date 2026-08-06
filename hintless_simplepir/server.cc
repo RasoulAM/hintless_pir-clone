@@ -432,11 +432,6 @@ absl::Status Server::Preprocess() {
 
 absl::StatusOr<HintlessPirResponse> Server::HandleRequest(
     const HintlessPirRequest& request) {
-  if (!IsPreprocessed()) {
-    return absl::FailedPreconditionError("Server has not been preprocessed.");
-  }
-
-
   auto start = std::chrono::high_resolution_clock::now();
   if (params_.write_to_disk && (linpir_databases_.empty() || linpir_databases_[0].empty())) {
       LoadStateFromDisk();
@@ -444,6 +439,11 @@ absl::StatusOr<HintlessPirResponse> Server::HandleRequest(
           linpir_servers_[k]->Preprocess().IgnoreError();
       }
   }
+
+  if (!IsPreprocessed()) {
+    return absl::FailedPreconditionError("Server has not been preprocessed.");
+  }
+
   auto end = std::chrono::high_resolution_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
   std::cout << "│   ► Server Data Load Time: " << duration << " us" << std::endl;
