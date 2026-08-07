@@ -43,7 +43,7 @@ struct Parameters {
 
   rlwe::PrngType prng_type;
   
-  bool write_to_disk;
+  bool write_to_file;
 };
 
 }  // namespace hintless_simplepir

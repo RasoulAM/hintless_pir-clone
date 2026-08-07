@@ -32,7 +32,7 @@
 ABSL_FLAG(int, num_rows, 1024, "Number of rows");
 ABSL_FLAG(int, num_cols, 1024, "Number of cols");
 ABSL_FLAG(int, db_record_bit_size, 8, "Record Size in bits");
-ABSL_FLAG(bool, write_to_disk, false, "Write preprocessing material to disk");
+ABSL_FLAG(bool, write_to_file, false, "Write preprocessing material to file");
 
 namespace hintless_pir {
 namespace hintless_simplepir {
@@ -59,7 +59,7 @@ const Parameters kParameters{
             .rows_per_block = 1024,
         },
     .prng_type = rlwe::PRNG_TYPE_HKDF,
-    .write_to_disk = false,
+    .write_to_file = false,
 };
 
 void BM_HintlessPirPreprocess(benchmark::State& state) {
@@ -76,7 +76,7 @@ void BM_HintlessPirPreprocess(benchmark::State& state) {
   params.db_rows = num_rows;
   params.db_cols = num_cols;
   params.db_record_bit_size = db_record_bit_size;
-  params.write_to_disk = absl::GetFlag(FLAGS_write_to_disk);
+  params.write_to_file = absl::GetFlag(FLAGS_write_to_file);
 
   // Create server and fill in random database records.
   auto server = Server::CreateWithRandomDatabaseRecords(params).value();
@@ -104,7 +104,7 @@ void BM_HintlessPirRlwe64(benchmark::State& state) {
   params.db_rows = num_rows;
   params.db_cols = num_cols;
   params.db_record_bit_size = db_record_bit_size;
-  params.write_to_disk = absl::GetFlag(FLAGS_write_to_disk);
+  params.write_to_file = absl::GetFlag(FLAGS_write_to_file);
 
   std::cout << "num_rows: " << num_rows
             << ", num_cols: " << num_cols << std::endl;

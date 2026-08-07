@@ -244,6 +244,15 @@ void Server::DumpStateToDisk() {
     
     size_t total_size = out.tellp();
     out.close();
+
+    // Cache eviction via POSIX APIs
+    int fd = open("/tmp/hintless_db.bin", O_RDWR);
+    if (fd != -1) {
+        fdatasync(fd);
+        posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+        close(fd);
+    }
+    
     std::cout << "Server Long term Storage: " << total_size << " bytes" << std::endl;
 }
 
@@ -256,14 +265,24 @@ void Server::LoadStateFromDisk() {
     off_t size = lseek(fd, 0, SEEK_END);
     lseek(fd, 0, SEEK_SET);
     
-    void* mapped = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
-    if (mapped == MAP_FAILED) {
-        std::cerr << "Failed to mmap!" << std::endl;
-        close(fd);
-        return;
-    }
+    auto start_load = std::chrono::high_resolution_clock::now();
     
-    const char* ptr = reinterpret_cast<const char*>(mapped);
+    char* buffer = new char[size];
+    char* write_ptr = buffer;
+    size_t bytes_left = size;
+    while (bytes_left > 0) {
+        ssize_t bytes_read = read(fd, write_ptr, bytes_left);
+        if (bytes_read <= 0) break;
+        write_ptr += bytes_read;
+        bytes_left -= bytes_read;
+    }
+    close(fd);
+    
+    auto end_load = std::chrono::high_resolution_clock::now();
+    auto duration_load = std::chrono::duration_cast<std::chrono::microseconds>(end_load - start_load).count();
+    std::cout << "Server Data Load Time: " << duration_load << " us" << std::endl;
+    
+    const char* ptr = buffer;
     
     // 1. Read lwe_query_pad_
     size_t rows, cols;
@@ -365,8 +384,7 @@ void Server::LoadStateFromDisk() {
         // Wait, we don't save LinPirServer's internal state!
     }
     
-    munmap(mapped, size);
-    close(fd);
+    delete[] buffer;
 }
 
 absl::Status Server::Preprocess() {
@@ -419,7 +437,7 @@ absl::Status Server::Preprocess() {
 
 
   // Dump state to disk if requested
-  if (params_.write_to_disk) {
+  if (params_.write_to_file) {
     DumpStateToDisk();
   
     // Clear memory to force loading from disk on HandleRequest
@@ -435,7 +453,7 @@ absl::Status Server::Preprocess() {
 absl::StatusOr<HintlessPirResponse> Server::HandleRequest(
     const HintlessPirRequest& request) {
   auto start = std::chrono::high_resolution_clock::now();
-  if (params_.write_to_disk && (linpir_databases_.empty() || linpir_databases_[0].empty())) {
+  if (params_.write_to_file && (linpir_databases_.empty() || linpir_databases_[0].empty())) {
       LoadStateFromDisk();
       for (int k = 0; k < rlwe_contexts_.size(); ++k) {
           linpir_servers_[k]->Preprocess().IgnoreError();
