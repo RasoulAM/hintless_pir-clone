@@ -19,6 +19,8 @@
 
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
 #include "benchmark/benchmark.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -138,7 +140,12 @@ void BM_HintlessPirRlwe64(benchmark::State& state) {
 
   // Create a client and issue request.
   auto client = Client::Create(params, public_params).value();
+
+  absl::Time gen_start = absl::Now();
   auto request = client->GenerateRequest(1).value();
+  absl::Time gen_end = absl::Now();
+  double gen_ms = absl::ToDoubleMilliseconds(gen_end - gen_start);
+  std::cout << "Client Generate Request Time: " << gen_ms << " ms" << std::endl;
 
   for (auto _ : state) {
     auto response = server->HandleRequest(request);
@@ -147,7 +154,13 @@ void BM_HintlessPirRlwe64(benchmark::State& state) {
 
   // Sanity check on the correctness of the instantiation.
   auto response = server->HandleRequest(request).value();
+
+  absl::Time rec_start = absl::Now();
   std::string record = client->RecoverRecord(response).value();
+  absl::Time rec_end = absl::Now();
+  double rec_ms = absl::ToDoubleMilliseconds(rec_end - rec_start);
+  std::cout << "Client Extract Response Time: " << rec_ms << " ms" << std::endl;
+
   std::string expected = database->Record(1).value();
   ASSERT_EQ(record, expected);
 }
