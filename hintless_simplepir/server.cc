@@ -176,6 +176,19 @@ void Server::DumpStateToDisk() {
         std::cerr << "Failed to open /tmp/hintless_db.bin for writing!" << std::endl;
         return;
     }
+
+    // 0. Write database_->Data()
+    size_t num_shards = database_->Data().size();
+    out.write(reinterpret_cast<const char*>(&num_shards), sizeof(num_shards));
+    for (const auto& matrix : database_->Data()) {
+        size_t rows = matrix.size();
+        size_t cols = matrix.empty() ? 0 : matrix[0].size();
+        out.write(reinterpret_cast<const char*>(&rows), sizeof(rows));
+        out.write(reinterpret_cast<const char*>(&cols), sizeof(cols));
+        for (const auto& row : matrix) {
+            out.write(reinterpret_cast<const char*>(row.data()), cols * sizeof(absl::uint128));
+        }
+    }
     
     // 1. Write lwe_query_pad_
     size_t rows = lwe_query_pad_->rows();
@@ -283,6 +296,22 @@ void Server::LoadStateFromDisk() {
     std::cout << "Server Data Load Time: " << duration_load << " us" << std::endl;
     
     const char* ptr = buffer;
+    
+    // 0. Read database_->Data()
+    size_t num_data_matrices;
+    std::memcpy(&num_data_matrices, ptr, sizeof(num_data_matrices)); ptr += sizeof(num_data_matrices);
+    std::vector<std::vector<std::vector<absl::uint128>>> data(num_data_matrices);
+    for (size_t i = 0; i < num_data_matrices; ++i) {
+        size_t rows, cols;
+        std::memcpy(&rows, ptr, sizeof(rows)); ptr += sizeof(rows);
+        std::memcpy(&cols, ptr, sizeof(cols)); ptr += sizeof(cols);
+        data[i].resize(rows);
+        for (size_t r = 0; r < rows; ++r) {
+            data[i][r].resize(cols);
+            std::memcpy(data[i][r].data(), ptr, cols * sizeof(absl::uint128)); ptr += cols * sizeof(absl::uint128);
+        }
+    }
+    database_->SetData(std::move(data));
     
     // 1. Read lwe_query_pad_
     size_t rows, cols;
@@ -445,6 +474,7 @@ absl::Status Server::Preprocess() {
     linpir_servers_.clear();
     lwe_query_pad_.reset();
     database_->SetHints({});
+    database_->SetData({});
   }
   
   return absl::OkStatus();

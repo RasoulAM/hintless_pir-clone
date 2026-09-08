@@ -74,6 +74,7 @@ class Database {
   size_t NumRecords() const { return num_records_; }
 
   void SetHints(std::vector<std::vector<std::vector<lwe::Integer>>> hints) { hint_matrices_ = std::move(hints); }
+  void SetData(std::vector<lwe::Matrix> data) { data_matrices_ = std::move(data); }
 
  private:
   explicit Database(Parameters params, const lwe::Matrix* lwe_query_pad,
