@@ -414,6 +414,12 @@ void Server::LoadStateFromDisk() {
     }
     
     delete[] buffer;
+
+    // Time spent deserializing the buffer into in-memory structures (after the
+    // raw read above). Reported separately so it can be attributed to loading.
+    auto end_parse = std::chrono::high_resolution_clock::now();
+    auto duration_parse = std::chrono::duration_cast<std::chrono::microseconds>(end_parse - end_load).count();
+    std::cout << "Server Data Parse Time: " << duration_parse << " us" << std::endl;
 }
 
 absl::Status Server::Preprocess() {
@@ -485,9 +491,16 @@ absl::StatusOr<HintlessPirResponse> Server::HandleRequest(
   auto start = std::chrono::high_resolution_clock::now();
   if (params_.write_to_file && (linpir_databases_.empty() || linpir_databases_[0].empty())) {
       LoadStateFromDisk();
+      // LinPIR server state (expanded pads / gadget digits) is not persisted,
+      // so it is recomputed here. Report its cost separately.
+      auto start_rehydrate = std::chrono::high_resolution_clock::now();
       for (int k = 0; k < rlwe_contexts_.size(); ++k) {
           linpir_servers_[k]->Preprocess().IgnoreError();
       }
+      auto end_rehydrate = std::chrono::high_resolution_clock::now();
+      std::cout << "Server LinPIR Rehydrate Time: "
+                << std::chrono::duration_cast<std::chrono::microseconds>(end_rehydrate - start_rehydrate).count()
+                << " us" << std::endl;
   }
 
   if (!IsPreprocessed()) {
