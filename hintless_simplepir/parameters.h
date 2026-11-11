@@ -50,7 +50,7 @@ struct Parameters {
   //     the LinPIR server's expanded pads / gadget digits) resident in memory
   //     instead of storing it per database, and do not store the raw hint
   //     matrix, which is not used to answer queries.
-  bool ssd_seed_state_in_memory = false;
+  bool ssd_seed_state_in_memory = true;
   // (2) Store the LinPIR database compactly: the 32-bit hint matrix once,
   //     instead of the BFV-encoded diagonals (2 RNS limbs x 64 bits per slot,
   //     per plaintext modulus); the diagonals are re-encoded after loading.

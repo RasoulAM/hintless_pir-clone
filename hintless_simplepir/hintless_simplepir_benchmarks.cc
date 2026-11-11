@@ -35,7 +35,7 @@ ABSL_FLAG(int, num_rows, 1024, "Number of rows");
 ABSL_FLAG(int, num_cols, 1024, "Number of cols");
 ABSL_FLAG(int, db_record_bit_size, 8, "Record Size in bits");
 ABSL_FLAG(bool, write_to_file, false, "Write preprocessing material to file");
-ABSL_FLAG(bool, ssd_seed_state_in_memory, false,
+ABSL_FLAG(bool, ssd_seed_state_in_memory, true,
           "SSD option 1: keep seed-derived state in memory, store only data "
           "used online.");
 ABSL_FLAG(bool, ssd_compact_linpir, false,
