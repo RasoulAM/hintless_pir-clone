@@ -35,6 +35,16 @@ ABSL_FLAG(int, num_rows, 1024, "Number of rows");
 ABSL_FLAG(int, num_cols, 1024, "Number of cols");
 ABSL_FLAG(int, db_record_bit_size, 8, "Record Size in bits");
 ABSL_FLAG(bool, write_to_file, false, "Write preprocessing material to file");
+ABSL_FLAG(bool, ssd_seed_state_in_memory, false,
+          "SSD option 1: keep seed-derived state in memory, store only data "
+          "used online.");
+ABSL_FLAG(bool, ssd_compact_linpir, false,
+          "SSD option 2: store the 32-bit hint once instead of BFV diagonals.");
+ABSL_FLAG(bool, ssd_compact_linpir_coeff, false,
+          "SSD option 2b: store BFV diagonals as int32 coefficients, NTT on "
+          "load.");
+ABSL_FLAG(bool, ssd_direct_read, false,
+          "SSD option 3: read directly into destination buffers.");
 
 namespace hintless_pir {
 namespace hintless_simplepir {
@@ -79,6 +89,11 @@ void BM_HintlessPirPreprocess(benchmark::State& state) {
   params.db_cols = num_cols;
   params.db_record_bit_size = db_record_bit_size;
   params.write_to_file = absl::GetFlag(FLAGS_write_to_file);
+  params.ssd_seed_state_in_memory = absl::GetFlag(FLAGS_ssd_seed_state_in_memory);
+  params.ssd_compact_linpir = absl::GetFlag(FLAGS_ssd_compact_linpir);
+  params.ssd_direct_read = absl::GetFlag(FLAGS_ssd_direct_read);
+  params.ssd_compact_linpir_coeff =
+      absl::GetFlag(FLAGS_ssd_compact_linpir_coeff);
 
   // Create server and fill in random database records.
   auto server = Server::CreateWithRandomDatabaseRecords(params).value();
@@ -107,6 +122,11 @@ void BM_HintlessPirRlwe64(benchmark::State& state) {
   params.db_cols = num_cols;
   params.db_record_bit_size = db_record_bit_size;
   params.write_to_file = absl::GetFlag(FLAGS_write_to_file);
+  params.ssd_seed_state_in_memory = absl::GetFlag(FLAGS_ssd_seed_state_in_memory);
+  params.ssd_compact_linpir = absl::GetFlag(FLAGS_ssd_compact_linpir);
+  params.ssd_direct_read = absl::GetFlag(FLAGS_ssd_direct_read);
+  params.ssd_compact_linpir_coeff =
+      absl::GetFlag(FLAGS_ssd_compact_linpir_coeff);
 
   std::cout << "num_rows: " << num_rows
             << ", num_cols: " << num_cols << std::endl;

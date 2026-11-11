@@ -100,6 +100,24 @@ class Server {
   absl::StatusOr<LinPirResponse> HandleRequest(const RnsCiphertext& ct_query,
                                                const RnsGaloisKey& gk) const;
 
+  // Points the server at (re)loaded databases. The preprocessed pads, which
+  // only depend on the PRNG seeds, are kept.
+  void SetDatabases(std::vector<Database<RlweInteger>*> databases) {
+    databases_ = std::move(databases);
+  }
+
+  // Number of bytes held by the seed-derived preprocessed polynomials.
+  size_t PreprocessedStateBytes() const {
+    size_t bytes = 0;
+    auto add = [&bytes](const RnsPolynomial& p) {
+      for (const auto& v : p.Coeffs()) bytes += v.size() * sizeof(ModularInt);
+    };
+    for (const auto& p : ct_pads_) add(p);
+    for (const auto& ds : ct_sub_pad_digits_) for (const auto& p : ds) add(p);
+    for (const auto& p : gk_pads_) add(p);
+    return bytes;
+  }
+
   // Accessors to the PRNG seeds for generating a LinPir request.
   absl::string_view PrngSeedForCiphertextRandomPads() const {
     return prng_seed_ct_pad_;
