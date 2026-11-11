@@ -153,6 +153,10 @@ void BM_HintlessPirRlwe64(benchmark::State& state) {
   auto server = Server::CreateWithRandomDatabaseRecords(params).value();
   const Database* database = server->GetDatabase();
   ASSERT_EQ(database->NumRecords(), num_rows * num_cols);
+  // Record the expected value before preprocessing: in SSD mode the in-memory
+  // database is freed after it is written to disk and later reloaded, so this
+  // also checks the write/read round trip.
+  const std::string expected_before_ssd = database->Record(1).value();
 
   // Preprocess the server and get public parameters.
   ASSERT_OK(server->Preprocess());
@@ -183,6 +187,7 @@ void BM_HintlessPirRlwe64(benchmark::State& state) {
 
   std::string expected = database->Record(1).value();
   ASSERT_EQ(record, expected);
+  ASSERT_EQ(record, expected_before_ssd);
   std::cout << "Correctness check: PASSED (retrieved record matches the database)"
             << std::endl;
 }
