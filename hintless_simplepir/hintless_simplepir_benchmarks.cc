@@ -183,6 +183,8 @@ void BM_HintlessPirRlwe64(benchmark::State& state) {
 
   std::string expected = database->Record(1).value();
   ASSERT_EQ(record, expected);
+  std::cout << "Correctness check: PASSED (retrieved record matches the database)"
+            << std::endl;
 }
 
 BENCHMARK(BM_HintlessPirPreprocess);
