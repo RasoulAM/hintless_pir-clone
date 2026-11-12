@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdio>
 #include <iterator>
 #include <memory>
 #include <string>
@@ -194,38 +195,60 @@ class StateWriter {
   std::ofstream* out_;
 };
 
-// Reads the state file either through a staging buffer holding the whole
-// file (memcpy into destinations), or directly into destination buffers
-// with read(2) (option 3).
+// Reads the state file in one of three ways:
+//   kStaged:  one read of the whole file into a staging buffer, then memcpy
+//             into destinations (original loader).
+//   kDirect:  read(2) straight into each destination (option 3); many small
+//             reads.
+//   kChunked: large sequential read(2)s into a small reusable buffer (16 MiB,
+//             stays cache-friendly), memcpy into destinations; requests
+//             larger than the buffer are read straight into the destination.
 class StateReader {
  public:
-  StateReader(int fd, size_t size, bool direct) : fd_(fd), direct_(direct) {
-    if (!direct_) {
+  enum class Mode { kStaged, kDirect, kChunked };
+  static constexpr size_t kChunkBytes = size_t{16} << 20;
+
+  StateReader(int fd, size_t size, Mode mode) : fd_(fd), mode_(mode) {
+    if (mode_ == Mode::kStaged) {
       buffer_.reset(new char[size]);
-      char* p = buffer_.get();
-      size_t left = size;
-      while (left > 0) {
-        ssize_t r = read(fd_, p, left);
-        if (r <= 0) break;
-        p += r;
-        left -= r;
-      }
-      ptr_ = buffer_.get();
+      end_ = ReadFully(buffer_.get(), size);
+    } else if (mode_ == Mode::kChunked) {
+      buffer_.reset(new char[kChunkBytes]);
     }
   }
   void Read(void* dst, size_t n) {
-    if (direct_) {
-      char* p = reinterpret_cast<char*>(dst);
-      while (n > 0) {
-        ssize_t r = read(fd_, p, n);
-        if (r <= 0) break;
-        p += r;
-        n -= r;
-      }
-    } else {
-      std::memcpy(dst, ptr_, n);
-      ptr_ += n;
+    char* out = reinterpret_cast<char*>(dst);
+    if (mode_ == Mode::kDirect) {
+      ReadFully(out, n);
+      return;
     }
+    size_t avail = end_ - pos_;
+    size_t take = n < avail ? n : avail;
+    std::memcpy(out, buffer_.get() + pos_, take);
+    pos_ += take;
+    out += take;
+    n -= take;
+    if (n == 0 || mode_ != Mode::kChunked) return;
+    if (n >= kChunkBytes) {
+      ReadFully(out, n);
+      return;
+    }
+    Refill(n);
+    std::memcpy(out, buffer_.get() + pos_, n);
+    pos_ += n;
+  }
+  // Returns a pointer to the next `n` bytes and advances past them. The
+  // pointer is valid until the next call on this reader.
+  const char* Contiguous(size_t n) {
+    if (mode_ == Mode::kDirect || (mode_ == Mode::kChunked && n > kChunkBytes)) {
+      if (scratch_.size() < n) scratch_.resize(n);
+      Read(scratch_.data(), n);
+      return scratch_.data();
+    }
+    if (mode_ == Mode::kChunked && end_ - pos_ < n) Refill(n);
+    const char* p = buffer_.get() + pos_;
+    pos_ += n;
+    return p;
   }
   template <typename T>
   T Get() {
@@ -233,35 +256,142 @@ class StateReader {
     Read(&v, sizeof(T));
     return v;
   }
-  void ReleaseBuffer() { buffer_.reset(); }
+  void ReleaseBuffer() {
+    buffer_.reset();
+    std::vector<char>().swap(scratch_);
+  }
 
  private:
+  size_t ReadFully(char* p, size_t n) {
+    size_t done = 0;
+    while (done < n) {
+      ssize_t r = read(fd_, p + done, n - done);
+      if (r <= 0) break;
+      done += r;
+    }
+    return done;
+  }
+  // Moves the unread tail to the front of the chunk buffer and fills the
+  // rest, so that at least `need` (<= kChunkBytes) bytes are buffered unless
+  // the file ends first.
+  void Refill(size_t need) {
+    size_t left = end_ - pos_;
+    if (left > 0) std::memmove(buffer_.get(), buffer_.get() + pos_, left);
+    pos_ = 0;
+    end_ = left + ReadFully(buffer_.get() + left, kChunkBytes - left);
+    (void)need;
+  }
+
   int fd_;
-  bool direct_;
+  Mode mode_;
   std::unique_ptr<char[]> buffer_;
-  const char* ptr_ = nullptr;
+  size_t pos_ = 0;
+  size_t end_ = 0;
+  std::vector<char> scratch_;
 };
 
+// Number of bits needed for values in [0, q).
+inline int BitsForModulus(uint64_t q) {
+  int bits = 1;
+  while (bits < 64 && (uint64_t{1} << bits) < q) ++bits;
+  return bits;
+}
+
+// Packs `n` values of `bits` bits each, LSB first, little-endian.
+void PackWords(const uint64_t* vals, size_t n, int bits,
+               std::vector<uint8_t>& out) {
+  const size_t total = (n * bits + 7) / 8;
+  out.assign(total, 0);
+  uint64_t bit_pos = 0;
+  for (size_t i = 0; i < n; ++i, bit_pos += bits) {
+    uint64_t v = vals[i];
+    size_t byte = bit_pos >> 3;
+    int shift = bit_pos & 7;
+    int remaining = bits;
+    // First (partial) byte.
+    out[byte++] |= static_cast<uint8_t>(v << shift);
+    int written = 8 - shift;
+    while (written < remaining) {
+      out[byte++] = static_cast<uint8_t>(v >> written);
+      written += 8;
+    }
+  }
+}
+
+// Inverse of PackWords: one unaligned 64-bit load per value (bits <= 57),
+// byte-wise near the end of the buffer.
+void UnpackWords(const uint8_t* data, size_t n, int bits, uint64_t* vals) {
+  const size_t total = (n * bits + 7) / 8;
+  const uint64_t mask = bits >= 64 ? ~uint64_t{0} : (uint64_t{1} << bits) - 1;
+  uint64_t bit_pos = 0;
+  size_t i = 0;
+  if (bits <= 57) {
+    for (; i < n; ++i, bit_pos += bits) {
+      size_t byte = bit_pos >> 3;
+      if (byte + 8 > total) break;
+      uint64_t w;
+      std::memcpy(&w, data + byte, 8);  // little-endian host (x86-64)
+      vals[i] = (w >> (bit_pos & 7)) & mask;
+    }
+  }
+  for (; i < n; ++i, bit_pos += bits) {
+    uint64_t v = 0;
+    for (int b = 0; b < bits; ++b) {
+      uint64_t p = bit_pos + b;
+      v |= static_cast<uint64_t>((data[p >> 3] >> (p & 7)) & 1) << b;
+    }
+    vals[i] = v;
+  }
+}
+
 template <typename ModularInt>
-void WritePoly(StateWriter& w, const rlwe::RnsPolynomial<ModularInt>& poly) {
+void WritePoly(StateWriter& w, const rlwe::RnsPolynomial<ModularInt>& poly,
+               absl::Span<const rlwe::PrimeModulus<ModularInt>* const> moduli,
+               bool pack) {
+  static_assert(sizeof(ModularInt) == sizeof(uint64_t),
+                "expects 64-bit Montgomery words");
   auto coeffs = poly.Coeffs();
   w.Put<size_t>(coeffs.size());
-  for (const auto& vec : coeffs) {
+  std::vector<uint8_t> packed;
+  for (size_t v = 0; v < coeffs.size(); ++v) {
+    const auto& vec = coeffs[v];
     w.Put<size_t>(vec.size());
-    w.Write(vec.data(), vec.size() * sizeof(ModularInt));
+    if (!pack) {
+      w.Write(vec.data(), vec.size() * sizeof(ModularInt));
+      continue;
+    }
+    const int bits = BitsForModulus(moduli[v]->ModParams()->modulus);
+    const uint64_t* raw = reinterpret_cast<const uint64_t*>(vec.data());
+    for (size_t j = 0; j < vec.size(); ++j) {
+      if (bits < 64 && (raw[j] >> bits) != 0) {
+        std::cerr << "WritePoly: word does not fit in " << bits << " bits"
+                  << std::endl;
+        std::abort();
+      }
+    }
+    PackWords(raw, vec.size(), bits, packed);
+    w.Write(packed.data(), packed.size());
   }
 }
 
 template <typename ModularInt, typename Context>
-rlwe::RnsPolynomial<ModularInt> ReadPoly(StateReader& r, const Context* ctx) {
+rlwe::RnsPolynomial<ModularInt> ReadPoly(StateReader& r, const Context* ctx,
+                                         bool pack) {
   size_t num_vecs = r.Get<size_t>();
   std::vector<std::vector<ModularInt>> coeffs(num_vecs);
   for (size_t v = 0; v < num_vecs; ++v) {
     size_t n = r.Get<size_t>();
-    auto zero =
-        ModularInt::ImportZero(ctx->MainPrimeModuli()[v]->ModParams());
+    const auto* mod_params = ctx->MainPrimeModuli()[v]->ModParams();
+    auto zero = ModularInt::ImportZero(mod_params);
     coeffs[v].resize(n, zero);
-    r.Read(coeffs[v].data(), n * sizeof(ModularInt));
+    if (!pack) {
+      r.Read(coeffs[v].data(), n * sizeof(ModularInt));
+      continue;
+    }
+    const int bits = BitsForModulus(mod_params->modulus);
+    const size_t bytes = (n * bits + 7) / 8;
+    const uint8_t* src = reinterpret_cast<const uint8_t*>(r.Contiguous(bytes));
+    UnpackWords(src, n, bits, reinterpret_cast<uint64_t*>(coeffs[v].data()));
   }
   return rlwe::RnsPolynomial<ModularInt>::Create(std::move(coeffs), true)
       .value();
@@ -395,14 +525,17 @@ void Server::DumpStateToDisk() {
             if (params_.ssd_compact_linpir_coeff) {
               WriteSmallPoly<RlweModularInt>(w, poly, moduli);
             } else {
-              WritePoly(w, poly);
+              WritePoly<RlweModularInt>(w, poly, moduli, params_.ssd_pack_rns_words);
             }
           }
         }
       }
       const auto& pads = db->PadInnerProducts();
       w.Put<size_t>(pads.size());
-      for (const auto& poly : pads) WritePoly(w, poly);
+      auto pad_moduli = rlwe_contexts_[k]->MainPrimeModuli();
+      for (const auto& poly : pads) {
+        WritePoly<RlweModularInt>(w, poly, pad_moduli, params_.ssd_pack_rns_words);
+      }
     }
   }
 
@@ -421,7 +554,9 @@ void Server::DumpStateToDisk() {
   std::cout << "SSD options: seed_state_in_memory=" << opt1
             << " compact_linpir=" << opt2
             << " compact_linpir_coeff=" << params_.ssd_compact_linpir_coeff
-            << " direct_read=" << params_.ssd_direct_read << std::endl;
+            << " direct_read=" << params_.ssd_direct_read
+            << " chunked_read=" << params_.ssd_chunked_read
+            << " pack_rns_words=" << params_.ssd_pack_rns_words << std::endl;
   if (opt1) {
     size_t seed_state_bytes = static_cast<size_t>(lwe_query_pad_->rows()) *
                               lwe_query_pad_->cols() * sizeof(lwe::Integer);
@@ -446,9 +581,39 @@ void Server::LoadStateFromDisk() {
   off_t size = lseek(fd, 0, SEEK_END);
   lseek(fd, 0, SEEK_SET);
 
+  // Untimed check that the file really was evicted from the page cache.
+  {
+    size_t page = static_cast<size_t>(sysconf(_SC_PAGESIZE));
+    size_t pages = (static_cast<size_t>(size) + page - 1) / page;
+    size_t resident = 0;
+    void* map = size > 0 ? mmap(nullptr, size, PROT_READ, MAP_SHARED, fd, 0)
+                         : MAP_FAILED;
+    if (map != MAP_FAILED) {
+      std::vector<unsigned char> vec(pages);
+      if (mincore(map, size, vec.data()) == 0) {
+        for (unsigned char c : vec) resident += (c & 1);
+      }
+      munmap(map, size);
+    }
+    char pct[32];
+    std::snprintf(pct, sizeof(pct), "%.3f",
+                  pages ? 100.0 * resident / pages : 0.0);
+    std::cout << "Server Page Cache Residency Before Load: " << resident << "/"
+              << pages << " pages (" << pct << "%)" << std::endl;
+  }
+
+  // Interleaved read and parse (direct or chunked reads) are reported as one
+  // number.
+  const bool interleaved = opt3 || params_.ssd_chunked_read;
+  const StateReader::Mode mode =
+      opt3 ? StateReader::Mode::kDirect
+           : (params_.ssd_chunked_read ? StateReader::Mode::kChunked
+                                       : StateReader::Mode::kStaged);
+  const bool pack = params_.ssd_pack_rns_words;
+
   auto start = std::chrono::high_resolution_clock::now();
-  StateReader r(fd, size, opt3);
-  int64_t read_us = opt3 ? 0 : MicrosSince(start);
+  StateReader r(fd, size, mode);
+  int64_t read_us = interleaved ? 0 : MicrosSince(start);
   auto start_parse = std::chrono::high_resolution_clock::now();
 
   // Data matrices.
@@ -514,8 +679,8 @@ void Server::LoadStateFromDisk() {
               block.push_back(ReadSmallPoly<RlweModularInt>(r, moduli));
               derive_us += MicrosSince(start_derive);
             } else {
-              block.push_back(
-                  ReadPoly<RlweModularInt>(r, rlwe_contexts_[k].get()));
+              block.push_back(ReadPoly<RlweModularInt>(
+                  r, rlwe_contexts_[k].get(), pack));
             }
           }
         }
@@ -525,7 +690,8 @@ void Server::LoadStateFromDisk() {
       std::vector<rlwe::RnsPolynomial<RlweModularInt>> pads;
       pads.reserve(num_pads);
       for (size_t p = 0; p < num_pads; ++p) {
-        pads.push_back(ReadPoly<RlweModularInt>(r, rlwe_contexts_[k].get()));
+        pads.push_back(
+            ReadPoly<RlweModularInt>(r, rlwe_contexts_[k].get(), pack));
       }
       db->SetPadInnerProducts(std::move(pads));
       linpir_databases_[k].push_back(std::move(db));
@@ -560,7 +726,7 @@ void Server::LoadStateFromDisk() {
   }
   int64_t total_us = MicrosSince(start);
 
-  if (opt3) {
+  if (interleaved) {
     std::cout << "Server Load Read+Parse Time: " << parse_us << " us"
               << std::endl;
   } else {

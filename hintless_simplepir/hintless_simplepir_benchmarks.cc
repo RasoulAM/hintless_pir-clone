@@ -45,6 +45,11 @@ ABSL_FLAG(bool, ssd_compact_linpir_coeff, false,
           "load.");
 ABSL_FLAG(bool, ssd_direct_read, false,
           "SSD option 3: read directly into destination buffers.");
+ABSL_FLAG(bool, ssd_chunked_read, true,
+          "Read the state file in 16 MiB chunks through a reusable buffer "
+          "instead of staging the whole file.");
+ABSL_FLAG(bool, ssd_pack_rns_words, true,
+          "Bit-pack RNS polynomial words to ceil(log2(q_i)) bits on disk.");
 
 namespace hintless_pir {
 namespace hintless_simplepir {
@@ -92,6 +97,8 @@ void BM_HintlessPirPreprocess(benchmark::State& state) {
   params.ssd_seed_state_in_memory = absl::GetFlag(FLAGS_ssd_seed_state_in_memory);
   params.ssd_compact_linpir = absl::GetFlag(FLAGS_ssd_compact_linpir);
   params.ssd_direct_read = absl::GetFlag(FLAGS_ssd_direct_read);
+  params.ssd_chunked_read = absl::GetFlag(FLAGS_ssd_chunked_read);
+  params.ssd_pack_rns_words = absl::GetFlag(FLAGS_ssd_pack_rns_words);
   params.ssd_compact_linpir_coeff =
       absl::GetFlag(FLAGS_ssd_compact_linpir_coeff);
 
@@ -125,6 +132,8 @@ void BM_HintlessPirRlwe64(benchmark::State& state) {
   params.ssd_seed_state_in_memory = absl::GetFlag(FLAGS_ssd_seed_state_in_memory);
   params.ssd_compact_linpir = absl::GetFlag(FLAGS_ssd_compact_linpir);
   params.ssd_direct_read = absl::GetFlag(FLAGS_ssd_direct_read);
+  params.ssd_chunked_read = absl::GetFlag(FLAGS_ssd_chunked_read);
+  params.ssd_pack_rns_words = absl::GetFlag(FLAGS_ssd_pack_rns_words);
   params.ssd_compact_linpir_coeff =
       absl::GetFlag(FLAGS_ssd_compact_linpir_coeff);
 

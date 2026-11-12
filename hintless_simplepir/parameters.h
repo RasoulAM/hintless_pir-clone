@@ -63,6 +63,13 @@ struct Parameters {
   // (3) Read directly into the destination buffers instead of reading the
   //     whole file into a staging buffer and copying.
   bool ssd_direct_read = false;
+  // Read the state file in fixed-size chunks through a small reusable buffer
+  // (large sequential reads, no whole-file staging buffer). Ignored when
+  // ssd_direct_read is set.
+  bool ssd_chunked_read = true;
+  // Store RNS polynomial words (Montgomery form, < q_i) bit-packed with
+  // ceil(log2(q_i)) bits instead of 64 bits.
+  bool ssd_pack_rns_words = true;
 };
 
 }  // namespace hintless_simplepir
